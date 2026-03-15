@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -38,6 +39,8 @@ import (
 )
 
 type BrokerContext struct {
+	rings *RingRegistry // Whiteout: ring-based peer assignment
+
 	snowflakes           *SnowflakeHeap
 	restrictedSnowflakes *SnowflakeHeap
 	// Maps keeping track of snowflakeIDs required to match SDP answers from
@@ -82,6 +85,7 @@ func NewBrokerContext(
 	bridgeListHolder.LoadBridgeInfo(bytes.NewReader([]byte(DefaultBridges)))
 
 	return &BrokerContext{
+		rings:                NewRingRegistry(), // Whiteout: initialize ring registry
 		snowflakes:           snowflakes,
 		restrictedSnowflakes: rSnowflakes,
 		idToSnowflake:        make(map[string]*Snowflake),
@@ -316,6 +320,20 @@ func main() {
 	http.Handle("/prometheus", promhttp.HandlerFor(ctx.metrics.promMetrics.registry, promhttp.HandlerOpts{}))
 
 	http.Handle("/amp/client/", SnowflakeHandler{i, ampClientOffers})
+
+	http.HandleFunc("/v1/assign", func(w http.ResponseWriter, r *http.Request) {
+		clientID := r.URL.Query().Get("client_id")
+		if clientID == "" {
+			clientID = "anonymous"
+		}
+		assignment, err := ctx.rings.AssignProxy(clientID, "unrestricted", false)
+		if err != nil {
+			http.Error(w, "assignment failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(assignment)
+	})
 
 	server := http.Server{
 		Addr: addr,

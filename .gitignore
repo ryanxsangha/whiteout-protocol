@@ -19,3 +19,39 @@ ignore/
 /tools/
 
 dist/
+
+
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.out
+
+# Go build artifacts
+/broker/broker
+/proxy/proxy
+/client/client
+/server/server
+
+# Go test artifacts
+*.test
+*.prof
+
+# Environment and secrets
+.env
+*.env
+config.local.*
+secrets.*
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
