@@ -102,3 +102,30 @@ func (r *RingRegistry) RegisterNode(id string, ip string, natType string) *Node 
 	r.nodeIndex[id] = node
 	return node
 }
+
+// Heartbeat updates the LastSeen timestamp for a node.
+// Returns false if the node isn't registered.
+func (r *RingRegistry) Heartbeat(nodeID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node, exists := r.nodeIndex[nodeID]
+	if !exists {
+		return false
+	}
+	node.LastSeen = time.Now()
+	return true
+}
+
+// EvictStaleNodes removes nodes that haven't sent a heartbeat within the timeout.
+func (r *RingRegistry) EvictStaleNodes(timeout time.Duration) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	evicted := 0
+	for id, node := range r.nodeIndex {
+		if time.Since(node.LastSeen) > timeout {
+			delete(r.nodeIndex, id)
+			evicted++
+		}
+	}
+	return evicted
+}

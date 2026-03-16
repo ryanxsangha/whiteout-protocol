@@ -307,6 +307,7 @@ func main() {
 	}
 
 	go ctx.Broker()
+	ctx.StartEviction()
 
 	i := &IPC{ctx}
 
@@ -349,6 +350,21 @@ func main() {
 		node := ctx.rings.RegisterNode(nodeID, nodeIP, natType)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(node)
+	})
+
+	http.HandleFunc("/v1/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		nodeID := r.URL.Query().Get("node_id")
+		if nodeID == "" {
+			http.Error(w, "node_id is required", http.StatusBadRequest)
+			return
+		}
+		ok := ctx.rings.Heartbeat(nodeID)
+		if !ok {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	server := http.Server{
@@ -450,4 +466,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// StartEviction runs a background loop that evicts stale nodes every 30 seconds.
+func (ctx *BrokerContext) StartEviction() {
+	ticker := time.NewTicker(30 * time.Second)
+	go func() {
+		for range ticker.C {
+			evicted := ctx.rings.EvictStaleNodes(60 * time.Second)
+			if evicted > 0 {
+				log.Printf("evicted %d stale nodes", evicted)
+			}
+		}
+	}()
 }
