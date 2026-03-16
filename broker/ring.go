@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -66,15 +67,38 @@ func NewRingRegistry() *RingRegistry {
 	}
 }
 
-// AssignProxy is a stub — returns a hardcoded response for now.
-// Real ring lookup logic will replace this later.
+// AssignProxy finds an available node and assigns it to the requesting client.
 func (r *RingRegistry) AssignProxy(clientID string, natType string, premium bool) (*ProxyAssignment, error) {
-	return &ProxyAssignment{
-		RingID:       "ring-001",
-		ProxyID:      "node-stub-001",
-		ProxyIP:      "0.0.0.0",
-		SpareID:      "node-stub-002",
-		SpareIP:      "0.0.0.0",
-		SessionToken: "stub-token-" + clientID,
-	}, nil
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// Find the first available node that isn't the client itself
+	for _, node := range r.nodeIndex {
+		if node.ID != clientID {
+			return &ProxyAssignment{
+				RingID:       "ring-001",
+				ProxyID:      node.ID,
+				ProxyIP:      node.IP,
+				SpareID:      "none",
+				SpareIP:      "none",
+				SessionToken: "token-" + clientID,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no available nodes for client %s", clientID)
+}
+
+// RegisterNode adds a new node to the registry or updates an existing one.
+func (r *RingRegistry) RegisterNode(id string, ip string, natType string) *Node {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node := &Node{
+		ID:       id,
+		IP:       ip,
+		NATType:  natType,
+		LastSeen: time.Now(),
+	}
+	r.nodeIndex[id] = node
+	return node
 }

@@ -335,6 +335,22 @@ func main() {
 		json.NewEncoder(w).Encode(assignment)
 	})
 
+	http.HandleFunc("/v1/register", func(w http.ResponseWriter, r *http.Request) {
+		nodeID := r.URL.Query().Get("node_id")
+		nodeIP := r.URL.Query().Get("ip")
+		natType := r.URL.Query().Get("nat_type")
+		if nodeID == "" || nodeIP == "" {
+			http.Error(w, "node_id and ip are required", http.StatusBadRequest)
+			return
+		}
+		if natType == "" {
+			natType = "unrestricted"
+		}
+		node := ctx.rings.RegisterNode(nodeID, nodeIP, natType)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(node)
+	})
+
 	server := http.Server{
 		Addr: addr,
 	}
