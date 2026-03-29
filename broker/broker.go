@@ -309,6 +309,9 @@ func main() {
 	go ctx.Broker()
 	ctx.StartEviction()
 
+	ctx.StartEviction()
+	ctx.StartRingFormation()
+
 	i := &IPC{ctx}
 
 	http.HandleFunc("/robots.txt", robotsTxtHandler)
@@ -473,10 +476,24 @@ func (ctx *BrokerContext) StartEviction() {
 	ticker := time.NewTicker(30 * time.Second)
 	go func() {
 		for range ticker.C {
-			evicted := ctx.rings.EvictStaleNodes(60 * time.Second)
+			evicted := ctx.rings.EvictStaleNodes(3 * 60 * time.Second)
 			if evicted > 0 {
 				log.Printf("evicted %d stale nodes", evicted)
 			}
+		}
+	}()
+}
+
+// StartRingFormation runs a background loop that re-forms rings every 90 seconds.
+func (ctx *BrokerContext) StartRingFormation() {
+	formed := ctx.rings.FormRings()
+	log.Printf("ring formation (initial): %d rings active", formed)
+
+	ticker := time.NewTicker(90 * time.Second)
+	go func() {
+		for range ticker.C {
+			formed := ctx.rings.FormRings()
+			log.Printf("ring formation: %d rings active", formed)
 		}
 	}()
 }

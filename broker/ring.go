@@ -72,21 +72,32 @@ func (r *RingRegistry) AssignProxy(clientID string, natType string, premium bool
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Find the first available node that isn't the client itself
-	for _, node := range r.nodeIndex {
-		if node.ID != clientID {
+	// Find a ring with at least 2 nodes (proxy + spare)
+	for _, ring := range r.rings {
+		if len(ring.Nodes) < 2 {
+			continue
+		}
+		// Pick first node that isn't the client
+		for idx, node := range ring.Nodes {
+			if node.ID == clientID {
+				continue
+			}
+			spare := ring.Nodes[(idx+1)%len(ring.Nodes)]
+			if spare.ID == clientID {
+				spare = ring.Nodes[(idx+2)%len(ring.Nodes)]
+			}
 			return &ProxyAssignment{
-				RingID:       "ring-001",
+				RingID:       ring.ID,
 				ProxyID:      node.ID,
 				ProxyIP:      node.IP,
-				SpareID:      "none",
-				SpareIP:      "none",
+				SpareID:      spare.ID,
+				SpareIP:      spare.IP,
 				SessionToken: "token-" + clientID,
 			}, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no available nodes for client %s", clientID)
+	return nil, fmt.Errorf("no available rings for client %s", clientID)
 }
 
 // RegisterNode adds a new node to the registry or updates an existing one.
@@ -128,4 +139,77 @@ func (r *RingRegistry) EvictStaleNodes(timeout time.Duration) int {
 		}
 	}
 	return evicted
+}
+
+// FormRings groups all registered nodes into directed rings of 3–5 nodes,
+// assigning each node its NextHop and WarmSpare.
+// Existing ring assignments are cleared before re-formation.
+func (r *RingRegistry) FormRings() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Collect all nodes into a slice
+	nodes := make([]*Node, 0, len(r.nodeIndex))
+	for _, node := range r.nodeIndex {
+		nodes = append(nodes, node)
+	}
+
+	// Clear existing ring assignments
+	r.rings = make(map[string]*Ring)
+	for _, node := range nodes {
+		node.RingID = ""
+		node.NextHop = ""
+		node.WarmSpare = ""
+	}
+
+	if len(nodes) < 3 {
+		return 0
+	}
+
+	// Shuffle for random grouping (no crypto needed here)
+	for i := len(nodes) - 1; i > 0; i-- {
+		j := time.Now().UnixNano() % int64(i+1) // deterministic enough for ring formation
+		nodes[i], nodes[j] = nodes[j], nodes[i]
+	}
+
+	// Partition into rings of target size 4, min 3, max 5
+	targetSize := 4
+	ringCount := len(nodes) / targetSize
+	if ringCount == 0 {
+		ringCount = 1
+	}
+
+	formed := 0
+	start := 0
+	for i := 0; i < ringCount; i++ {
+		end := start + targetSize
+		// Last ring absorbs the remainder
+		if i == ringCount-1 {
+			end = len(nodes)
+		}
+		chunk := nodes[start:end]
+		if len(chunk) < 3 {
+			// Fold into previous ring if too small
+			break
+		}
+
+		ringID := fmt.Sprintf("ring-%04d", formed+1)
+		ring := &Ring{
+			ID:    ringID,
+			Nodes: chunk,
+		}
+
+		n := len(chunk)
+		for idx, node := range chunk {
+			node.RingID = ringID
+			node.NextHop = chunk[(idx+1)%n].ID
+			node.WarmSpare = chunk[(idx+2)%n].ID
+		}
+
+		r.rings[ringID] = ring
+		formed++
+		start = end
+	}
+
+	return formed
 }
