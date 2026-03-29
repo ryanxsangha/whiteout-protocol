@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 type RingRegistry struct {
 	rings     map[string]*Ring
 	nodeIndex map[string]*Node
+	sessions  map[string]*Session
 	mu        sync.RWMutex
 }
 
@@ -64,20 +66,20 @@ func NewRingRegistry() *RingRegistry {
 	return &RingRegistry{
 		rings:     make(map[string]*Ring),
 		nodeIndex: make(map[string]*Node),
+		sessions:  make(map[string]*Session),
 	}
 }
 
-// AssignProxy finds an available node and assigns it to the requesting client.
+// AssignProxy finds an available ring, assigns a proxy and spare to the client,
+// creates a Session, and returns a signed ProxyAssignment with a real session token.
 func (r *RingRegistry) AssignProxy(clientID string, natType string, premium bool) (*ProxyAssignment, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	// Find a ring with at least 2 nodes (proxy + spare)
 	for _, ring := range r.rings {
 		if len(ring.Nodes) < 2 {
 			continue
 		}
-		// Pick first node that isn't the client
 		for idx, node := range ring.Nodes {
 			if node.ID == clientID {
 				continue
@@ -86,13 +88,30 @@ func (r *RingRegistry) AssignProxy(clientID string, natType string, premium bool
 			if spare.ID == clientID {
 				spare = ring.Nodes[(idx+2)%len(ring.Nodes)]
 			}
+
+			token, err := generateToken()
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate session token: %w", err)
+			}
+
+			now := time.Now()
+			session := &Session{
+				ClientID:   clientID,
+				RingID:     ring.ID,
+				ProxyID:    node.ID,
+				SpareID:    spare.ID,
+				CreatedAt:  now,
+				LastActive: now,
+			}
+			r.sessions[token] = session
+
 			return &ProxyAssignment{
 				RingID:       ring.ID,
 				ProxyID:      node.ID,
 				ProxyIP:      node.IP,
 				SpareID:      spare.ID,
 				SpareIP:      spare.IP,
-				SessionToken: "token-" + clientID,
+				SessionToken: token,
 			}, nil
 		}
 	}
@@ -212,4 +231,27 @@ func (r *RingRegistry) FormRings() int {
 	}
 
 	return formed
+}
+
+// generateToken returns a cryptographically random 32-byte hex session token.
+func generateToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", b), nil
+}
+
+// LookupSession retrieves a session by token and updates LastActive.
+// Returns nil if the token is not found.
+func (r *RingRegistry) LookupSession(token string) *Session {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	session, exists := r.sessions[token]
+	if !exists {
+		return nil
+	}
+	session.LastActive = time.Now()
+	return session
 }

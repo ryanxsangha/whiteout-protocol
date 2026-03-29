@@ -370,6 +370,21 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
+	http.HandleFunc("/v1/session", func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			http.Error(w, "token is required", http.StatusBadRequest)
+			return
+		}
+		session := ctx.rings.LookupSession(token)
+		if session == nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(session)
+	})
+
 	server := http.Server{
 		Addr: addr,
 	}
