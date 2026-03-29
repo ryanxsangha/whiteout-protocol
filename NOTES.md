@@ -20,7 +20,7 @@ that ring only. Make formation incremental — only touch degraded or unformed r
 ## [LIM-002] SessionToken is a Placeholder
 **Type:** Known Limitation  
 **Component:** broker/ring.go — AssignProxy  
-**Status:** Open  
+**Status:** Closed
 
 `SessionToken` is currently `"token-" + clientID`. No real session is created or stored.
 Turbotunnel ClientID session continuity is not yet implemented.
