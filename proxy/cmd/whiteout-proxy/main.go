@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -27,6 +29,9 @@ var (
 func main() {
 	flag.Parse()
 
+	if *flagRelay == "" {
+		log.Fatal("flag -relay is required (e.g. 10.0.0.1:51820)")
+	}
 	if *flagPublicIP == "" {
 		log.Fatal("flag -ip is required (public IP this node is reachable at)")
 	}
@@ -35,7 +40,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("node ID: %v", err)
 	}
-	log.Printf("[whiteout-proxy] node_id=%s broker=%s", nodeID, *flagBroker)
+	log.Printf("[whiteout-proxy] node_id=%s listen=%s relay=%s broker=%s",
+		nodeID, *flagListen, *flagRelay, *flagBroker)
 
 	if err := register(nodeID, *flagPublicIP, *flagNATType); err != nil {
 		log.Fatalf("broker registration failed: %v", err)
@@ -47,8 +53,13 @@ func main() {
 
 	go runHeartbeat(ctx, nodeID)
 
-	// listener comes in next commit
-	select {}
+	ln, err := net.Listen("tcp", *flagListen)
+	if err != nil {
+		log.Fatalf("listen %s: %v", *flagListen, err)
+	}
+	log.Printf("[whiteout-proxy] accepting connections on %s", *flagListen)
+
+	runListener(ctx, ln) // blocks until ctx cancelled or ln closed
 }
 
 // loadOrCreateID reads a node ID from path, or generates and writes a new one.
@@ -120,5 +131,73 @@ func runHeartbeat(ctx context.Context, nodeID string) {
 				log.Println("[heartbeat] ok")
 			}
 		}
+	}
+}
+
+// runListener accepts connections until ctx is cancelled.
+func runListener(ctx context.Context, ln net.Listener) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				log.Printf("[listener] accept error: %v", err)
+				return
+			}
+		}
+		go handleConn(ctx, conn)
+	}
+}
+
+// handleConn dials the upstream relay and splices the two connections
+// bidirectionally. Uses CloseWrite so neither side hangs on EOF.
+func handleConn(ctx context.Context, client net.Conn) {
+	defer client.Close()
+
+	if *flagVerbose {
+		log.Printf("[relay] new connection from %s", client.RemoteAddr())
+	}
+
+	relay, err := net.DialTimeout("tcp", *flagRelay, 10*time.Second)
+	if err != nil {
+		log.Printf("[relay] dial %s failed: %v", *flagRelay, err)
+		return
+	}
+	defer relay.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(relay, client)
+		if tc, ok := relay.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(client, relay)
+		if tc, ok := client.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if *flagVerbose {
+			log.Printf("[relay] connection from %s closed cleanly", client.RemoteAddr())
+		}
+	case <-ctx.Done():
+		client.Close()
+		relay.Close()
 	}
 }
