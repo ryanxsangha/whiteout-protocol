@@ -12,7 +12,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -51,7 +53,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go runHeartbeat(ctx, nodeID)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runHeartbeat(ctx, nodeID)
+	}()
 
 	ln, err := net.Listen("tcp", *flagListen)
 	if err != nil {
@@ -59,7 +67,21 @@ func main() {
 	}
 	log.Printf("[whiteout-proxy] accepting connections on %s", *flagListen)
 
-	runListener(ctx, ln) // blocks until ctx cancelled or ln closed
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runListener(ctx, ln)
+	}()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+
+	log.Println("[whiteout-proxy] shutting down…")
+	cancel()
+	ln.Close()
+	wg.Wait()
+	log.Println("[whiteout-proxy] stopped")
 }
 
 // loadOrCreateID reads a node ID from path, or generates and writes a new one.
