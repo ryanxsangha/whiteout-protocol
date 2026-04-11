@@ -55,3 +55,6 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Whiteout persistent IDs
+proxy/cmd/whiteout-proxy/proxy-node-id*
