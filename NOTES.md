@@ -22,12 +22,6 @@ that ring only. Make formation incremental — only touch degraded or unformed r
 **Component:** broker/ring.go — AssignProxy  
 **Status:** Closed
 
-`SessionToken` is currently `"token-" + clientID`. No real session is created or stored.
-Turbotunnel ClientID session continuity is not yet implemented.
-
-**Fix:** Generate a real token (crypto/rand), store a Session struct in RingRegistry,
-wire up session lookup for reconnection.
-
 ---
 
 ## [LIM-003] AssignProxy Has No Load Balancing
