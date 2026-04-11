@@ -4,11 +4,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
+	"time"
 )
 
 var (
@@ -24,11 +27,28 @@ var (
 func main() {
 	flag.Parse()
 
+	if *flagPublicIP == "" {
+		log.Fatal("flag -ip is required (public IP this node is reachable at)")
+	}
+
 	nodeID, err := loadOrCreateID(*flagIDFile)
 	if err != nil {
 		log.Fatalf("node ID: %v", err)
 	}
-	log.Printf("[whiteout-proxy] node_id=%s", nodeID)
+	log.Printf("[whiteout-proxy] node_id=%s broker=%s", nodeID, *flagBroker)
+
+	if err := register(nodeID, *flagPublicIP, *flagNATType); err != nil {
+		log.Fatalf("broker registration failed: %v", err)
+	}
+	log.Println("[whiteout-proxy] registered with broker")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go runHeartbeat(ctx, nodeID)
+
+	// listener comes in next commit
+	select {}
 }
 
 // loadOrCreateID reads a node ID from path, or generates and writes a new one.
@@ -58,4 +78,47 @@ func loadOrCreateID(path string) (string, error) {
 		log.Printf("[id] warn: could not persist node ID to %s: %v", path, err)
 	}
 	return id, nil
+}
+
+// register sends a one-shot registration request to the broker.
+func register(nodeID, ip, natType string) error {
+	url := fmt.Sprintf("%s/v1/register?node_id=%s&ip=%s&nat_type=%s",
+		*flagBroker, nodeID, ip, natType)
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("broker returned %d: %s", resp.StatusCode, body)
+	}
+	return nil
+}
+
+// runHeartbeat pings /v1/heartbeat every 30s until ctx is cancelled.
+// Logs warnings on failure but never kills the process — transient broker
+// blips should not take down a relay node.
+func runHeartbeat(ctx context.Context, nodeID string) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			url := fmt.Sprintf("%s/v1/heartbeat?node_id=%s", *flagBroker, nodeID)
+			resp, err := http.Get(url)
+			if err != nil {
+				log.Printf("[heartbeat] warn: %v", err)
+				continue
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				log.Printf("[heartbeat] warn: broker returned %d", resp.StatusCode)
+			} else if *flagVerbose {
+				log.Println("[heartbeat] ok")
+			}
+		}
+	}
 }
