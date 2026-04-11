@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"io"
@@ -97,16 +98,11 @@ func loadOrCreateID(path string) (string, error) {
 	}
 
 	b := make([]byte, 16)
-	f, err := os.Open("/dev/urandom")
-	if err != nil {
-		return "", fmt.Errorf("open /dev/urandom: %w", err)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate node ID: %w", err)
 	}
-	defer f.Close()
-	if _, err := io.ReadFull(f, b); err != nil {
-		return "", fmt.Errorf("read urandom: %w", err)
-	}
-	id := fmt.Sprintf("%x", b)
 
+	id := fmt.Sprintf("%x", b)
 	if err := os.WriteFile(path, []byte(id), 0600); err != nil {
 		log.Printf("[id] warn: could not persist node ID to %s: %v", path, err)
 	}
