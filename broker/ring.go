@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
+	mrand "math/rand"
 	"sync"
 	"time"
 )
@@ -185,11 +186,9 @@ func (r *RingRegistry) FormRings() int {
 		return 0
 	}
 
-	// Shuffle for random grouping (no crypto needed here)
-	for i := len(nodes) - 1; i > 0; i-- {
-		j := time.Now().UnixNano() % int64(i+1) // deterministic enough for ring formation
+	mrand.Shuffle(len(nodes), func(i, j int) {
 		nodes[i], nodes[j] = nodes[j], nodes[i]
-	}
+	})
 
 	// Partition into rings of target size 4, min 3, max 5
 	targetSize := 4
