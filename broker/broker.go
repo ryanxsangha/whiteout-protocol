@@ -308,8 +308,6 @@ func main() {
 
 	go ctx.Broker()
 	ctx.StartEviction()
-
-	ctx.StartEviction()
 	ctx.StartRingFormation()
 
 	i := &IPC{ctx}
